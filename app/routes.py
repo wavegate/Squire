@@ -3,7 +3,7 @@ from app import app, db
 from app.forms import LoginForm, TestForm, RegistrationForm, EditProfileForm
 from flask import render_template, flash, redirect, url_for
 from flask_login import current_user, login_user, logout_user, login_required
-from app.models import User 
+from app.models import User, Score
 from werkzeug.urls import url_parse
 from datetime import datetime
 
@@ -17,17 +17,16 @@ def before_request():
 @app.route('/index')
 @login_required
 def index():
-    scores = [
-        {
-            'testname': 'Stroop',
-            'score': 23
-        },
-        {
-            'testname': 'Stroop',
-            'score': 19
-        }
-    ]
-    return render_template('index.html', title='Home', scores=scores )
+    page = request.args.get('page', 1, type=int)
+    scores = current_user.followed_scores().paginate(
+        page, app.config['POSTS_PER_PAGE'], False)
+    next_url = url_for('index', page=scores.next_num) \
+        if scores.has_next else None
+    prev_url = url_for('index', page=scores.prev_num) \
+        if scores.has_prev else None
+    return render_template('index.html', title='Home',
+                           scores=scores.items, next_url=next_url,
+                           prev_url=prev_url)
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -50,11 +49,15 @@ def login():
 def about():
     return render_template('about.html')
 
-@app.route('/test')
+@app.route('/test', methods=['GET', 'POST'])
 def test():
     form = TestForm()
     if form.validate_on_submit():
-        pass
+        score = Score(testname=form.testname.data, author=current_user, score=form.score.data)
+        db.session.add(score)
+        db.session.commit()
+        flash('Your score is now live!')
+        return redirect(url_for('index'))
     return render_template('test.html', title='Test', form=form)
 
 @app.route('/logout')
@@ -80,11 +83,15 @@ def register():
 @login_required
 def user(username):
     user = User.query.filter_by(username=username).first_or_404()
-    scores = [
-        {'testname': 'Stroop', 'score': 17, 'author':user},
-        {'testname': 'Stroop', 'score': 12, 'author':user}
-    ]
-    return render_template('user.html', user=user, scores=scores)
+    page = request.args.get('page', 1, type=int)
+    scores = user.scores.order_by(Score.timestamp.desc()).paginate(
+        page, app.config['POSTS_PER_PAGE'], False)
+    next_url = url_for('user', username=user.username, page=scores.next_num) \
+        if scores.has_next else None
+    prev_url = url_for('user', username=user.username, page=scores.prev_num) \
+        if scores.has_prev else None
+    return render_template('user.html', user=user, scores=scores.items,
+                           next_url=next_url, prev_url=prev_url)
 
 @app.route('/edit_profile', methods=['GET', 'POST'])
 @login_required
@@ -131,3 +138,16 @@ def unfollow(username):
     db.session.commit()
     flash('You are not following {}.'.format(username))
     return redirect(url_for('user', username=username))
+
+@app.route('/explore')
+@login_required
+def explore():
+    page = request.args.get('page', 1, type=int)
+    scores = Score.query.order_by(Score.timestamp.desc()).paginate(
+        page, app.config['POSTS_PER_PAGE'], False)
+    next_url = url_for('explore', page=scores.next_num) \
+        if scores.has_next else None
+    prev_url = url_for('explore', page=scores.prev_num) \
+        if scores.has_prev else None
+    return render_template("index.html", title='Explore', scores=scores.items,
+                          next_url=next_url, prev_url=prev_url)
